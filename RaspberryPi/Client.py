@@ -17,7 +17,7 @@ def on_message(client, userdata, msg): 	#Func For Sending msg
 	ser = serial.Serial("/dev/rfcomm0", 9600)
 	ser.write(msg.payload)
 	
-ADD = "3.27.156.48"
+ADD = "13.239.37.158"
 PORT = 1883
 client = mqtt.Client()
 client.on_connect = on_connect
