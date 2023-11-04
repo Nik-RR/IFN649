@@ -1,0 +1,145 @@
+#include <Wire.h>
+
+#define CCS811_ADDRESS 0x5A
+#define ALG_RESULT_DATA 0x02
+#define CCS811_STATUS 0x00
+#define CCS811_MEAS_MODE 0x01
+#define CCS811_SW_RESET 0xFF
+#define CCS811_APP_START 0xF4
+
+// Threshold values
+#define CO2_THRESHOLD 1000  
+#define TVOC_THRESHOLD 1000  
+
+int sensorPin = 21;
+int val = 0;
+float passengerCount = 0;
+float previousPassengerCount = -1; 
+int lastSensorState = LOW;
+unsigned long lastInterruptTime = 0;
+const long debounceTime = 50;
+
+uint16_t previousCo2 = 0xFFFF; 
+uint16_t previousTvoc = 0xFFFF; 
+
+void setup() {
+  Wire.begin();
+  
+  Serial.begin(9600);
+  Serial1.begin(9600); // Serial1 for BlueTooth
+  
+  // Initialize the built-in LED as OUTPUT
+  pinMode(LED_BUILTIN, OUTPUT);
+  
+  // Initialize the air qualifier sensor
+  initializeCCS811();
+
+  // Setup for passenger counting
+  pinMode(sensorPin, INPUT);
+}
+int alertRepetitions = 0;
+void loop() {
+  // Passenger count logic
+  val = digitalRead(sensorPin);
+  bool passengerCountChanged = false;
+
+  if(val == HIGH && lastSensorState == LOW) {
+    unsigned long currentInterruptTime = millis();
+    if(currentInterruptTime - lastInterruptTime > debounceTime) {
+      passengerCount += 0.5;  
+      passengerCountChanged = true;
+    }
+    lastInterruptTime = currentInterruptTime;
+  }
+
+  lastSensorState = val;
+
+  if (passengerCount == 49.5) {
+    passengerCount = 50;  
+    passengerCountChanged = true;
+  }
+  if (fmod(passengerCount, 25) == 0 && passengerCount != 0) {
+    if (alertRepetitions < 3) { // Only display alert 3 times
+      digitalWrite(LED_BUILTIN, HIGH);
+      Serial.print("Alert: Sanitization Required at Passenger Count: ");
+      Serial.println(passengerCount);
+      Serial1.print("Alert: Sanitization Required at Passenger Count: ");
+      Serial1.println(passengerCount);
+      alertRepetitions++;
+    }
+  } else {
+    digitalWrite(LED_BUILTIN, LOW);
+    if (alertRepetitions == 3) {
+      alertRepetitions = 0; 
+    }
+  }
+
+  // Only print if passenger count changed
+  if (passengerCountChanged && previousPassengerCount != passengerCount) {
+    Serial.print("PassengerCount:");
+    Serial.println(passengerCount);
+    previousPassengerCount = passengerCount;
+  }
+
+  // Air Quality logic
+  uint16_t co2, tvoc;
+  readSensorData(co2, tvoc);
+  bool airQualityChanged = (co2 != previousCo2) || (tvoc != previousTvoc);
+
+  if (airQualityChanged) {
+    Serial.print("AirQualityCO2:");
+    Serial.print(co2);
+    Serial.print(",AirQualityTVOC:");
+    Serial.println(tvoc);
+
+    previousCo2 = co2;
+    previousTvoc = tvoc;
+  }
+
+  // Only alert when there is a change and the thresholds are exceeded
+  if ((airQualityChanged && co2 > CO2_THRESHOLD) || (tvoc > TVOC_THRESHOLD)) {
+    digitalWrite(LED_BUILTIN, HIGH); // Turn ON LED
+    Serial.println("Warning: CO2 or TVOC level is too high!");
+    Serial1.println("Warning: CO2 or TVOC level is too high!");
+  } else {
+    digitalWrite(LED_BUILTIN, LOW); // Turn OFF LED
+  }
+
+  delay(10); 
+}
+
+void initializeCCS811() {
+  // Perform a software reset
+  Wire.beginTransmission(CCS811_ADDRESS);
+  Wire.write(CCS811_SW_RESET);
+  byte resetSequence[4] = {0x11, 0xE5, 0x72, 0x8A}; // Reset sequence
+  Wire.write(resetSequence, 4);
+  Wire.endTransmission();
+  delay(10); 
+
+  // Start the application
+  Wire.beginTransmission(CCS811_ADDRESS);
+  Wire.write(CCS811_APP_START);
+  Wire.endTransmission();
+  delay(10);
+
+  // Set the sensor to continuously measure air quality
+  Wire.beginTransmission(CCS811_ADDRESS);
+  Wire.write(CCS811_MEAS_MODE);
+  Wire.write(0x10); 
+  Wire.endTransmission();
+  delay(10);
+}
+
+void readSensorData(uint16_t &co2, uint16_t &tvoc) {
+  Wire.beginTransmission(CCS811_ADDRESS);
+  Wire.write(ALG_RESULT_DATA);
+  Wire.endTransmission();
+  
+  Wire.requestFrom(CCS811_ADDRESS, 4); 
+  
+  if(Wire.available() == 4) {
+    co2 = (Wire.read() << 8) | Wire.read();
+    tvoc = (Wire.read() << 8) | Wire.read();
+  }
+}
