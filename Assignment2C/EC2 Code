@@ -1,0 +1,26 @@
+import paho.mqtt.client as mqtt
+import datetime
+import pytz
+
+address = "localhost"
+port = 1883
+topic = "alerts/warnings"
+
+# Function to get current AEST time
+def get_current_time_aest():
+    tz = pytz.timezone('Australia/Sydney')
+    return datetime.datetime.now(tz).isoformat()
+
+def on_message(client, userdata, message):
+    current_time = get_current_time_aest()
+    message_with_timestamp = f"{current_time}: {message.payload.decode('utf-8')}"
+    print(message_with_timestamp)
+    with open("/home/ec2-user/log_file/output_log.txt", "a") as file:
+        file.write(message_with_timestamp + "\n")
+
+client = mqtt.Client("EC2Subscriber")
+client.connect(address, port=port)
+
+client.subscribe(topic)
+client.on_message = on_message
+client.loop_forever()
